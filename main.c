@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,11 +19,10 @@
 #define WIFI_SSID       "WE_C7354E"
 #define WIFI_PASS       "20144497500"
 
-#define LAPTOP_IP       "192.168.8.80" //laptop IP address, change if needed when connected to a different network
-#define ESP_UDP_LISTEN_PORT 3333 //ESP32 listens on this port for UDP packets from the laptop to trigger CSI capture and sending
-#define LAPTOP_PORT     5005 //laptop listens on this port for incoming CSI packets from the ESP32
+#define LAPTOP_IP       "192.168.8.245"
+#define LAPTOP_PORT     5005
 
-#define DEVICE_ID       "rx2"
+#define DEVICE_ID       "rx3"
 
 static const char *TAG = "CSI_UDP";
 
@@ -37,13 +37,17 @@ typedef struct {
     char device_id[8];
     uint32_t esp_timestamp;
     int8_t rssi;
-    uint8_t channel;
+    int8_t channel;
     uint16_t csi_len;
 } csi_packet_header_t;
 #pragma pack(pop)
 
 static void udp_init(void)
 {
+    if (udp_sock >= 0) {
+        return;
+    }
+
     udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 
     if (udp_sock < 0) {
@@ -107,9 +111,14 @@ static void csi_init(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(wifi_csi_rx_cb, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_config));
-    ESP_ERROR_CHECK(esp_wifi_set_csi(true));
 
-    ESP_LOGI(TAG, "CSI enabled");
+    esp_err_t ret = esp_wifi_set_csi(true);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "CSI enabled");
+    } else {
+        ESP_LOGE(TAG, "CSI enable failed: %s", esp_err_to_name(ret));
+    }
 }
 
 static void event_handler(
@@ -175,7 +184,7 @@ static void wifi_init_sta(void)
         .sta = {
             .ssid = WIFI_SSID,
             .password = WIFI_PASS,
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+            .threshold.authmode = WIFI_AUTH_OPEN,
         },
     };
 
@@ -184,41 +193,9 @@ static void wifi_init_sta(void)
 
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Important for faster CSI reception
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     ESP_LOGI(TAG, "Connecting to WiFi...");
-}
-
-static void udp_packet_receiver_task(void *pvParameters)
-{
-    char rx_buffer[128];
-
-    struct sockaddr_in listen_addr;
-    listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    listen_addr.sin_family = AF_INET;
-    listen_addr.sin_port = htons(ESP_UDP_LISTEN_PORT);
-
-    int listen_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-
-    if (listen_sock < 0) {
-        ESP_LOGE(TAG, "Failed to create UDP listen socket");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    if (bind(listen_sock, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) < 0) {
-        ESP_LOGE(TAG, "Failed to bind UDP listen socket");
-        close(listen_sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG, "ESP32 listening for trigger UDP packets on port %d", ESP_UDP_LISTEN_PORT);
-
-    while (1) {
-        recvfrom(listen_sock, rx_buffer, sizeof(rx_buffer), 0, NULL, NULL);
-    }
 }
 
 void app_main(void)
@@ -235,7 +212,11 @@ void app_main(void)
         portMAX_DELAY
     );
 
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
     udp_init();
+
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     csi_init();
 
