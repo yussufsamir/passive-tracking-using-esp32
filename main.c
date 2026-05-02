@@ -22,7 +22,7 @@
 #define ESP_UDP_LISTEN_PORT 3333 //ESP32 listens on this port for UDP packets from the laptop to trigger CSI capture and sending
 #define LAPTOP_PORT     5005 //laptop listens on this port for incoming CSI packets from the ESP32
 
-#define DEVICE_ID       "rx1"
+#define DEVICE_ID       "rx2"
 
 static const char *TAG = "CSI_UDP";
 
